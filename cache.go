@@ -6,6 +6,7 @@ type ComputeValue func() (value interface{}, ttl int, size int)
 
 type Cache interface {
 	Get(key string, computeValue ComputeValue) interface{}
+	Del(key string) bool
 }
 
 type cacheEntry struct {
@@ -19,10 +20,9 @@ type cacheEntry struct {
 }
 
 type lruCache struct {
-	maxmemory int
-	usedmemory int
+	maxmemory, usedmemory int
 	entries map[string]*cacheEntry
-	head *cacheEntry
+	head, tail *cacheEntry
 }
 
 func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
@@ -30,16 +30,23 @@ func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
 
 	if entry, ok := c.entries[key]; ok {
 		if entry.expiration.After(now) {
-			if entry.prev != nil {
-				entry.prev.next = entry.next
-			}
-			if entry.next != nil {
-				entry.next.prev = entry.prev
-			}
-
-			c.usedmemory -= entry.size
-			delete(c.entries, key)
+			c.evictEntry(entry)
 		} else {
+			if e != c.head {
+				if entry.prev != nil {
+					entry.prev.next = entry.next
+				}
+				if entry.next != nil {
+					entry.next.prev = entry.prev
+				}
+				if e == c.tail {
+					c.tail = e.prev
+					if c.tail == nil {
+						panic()
+					}
+				}
+				c.insertFront(entry);
+			}
 			return entry.value
 		}
 	}
@@ -49,34 +56,61 @@ func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
 		key: key,
 		value: value,
 		expiration: now.Add(time.Duration(ttl) * time.Second),
-		size: size,
-		next: c.head,
-		prev: nil,
+		size: size
 	}
 
+	c.insertFront(entry)
 	c.usedmemory += size
 	c.entries[key] = entry
-	if c.head != nil {
-		c.head.prev = entry
-	}
-	c.head = entry
 
-	if c.usedmemory > c.maxmemory {
-		c.evict()
+	for c.usedmemory > c.maxmemory && c.tail != nil {
+		c.evictEntry(c.tail)
 	}
 
 	return value
 }
 
-// TODO: Try to evict expired values!
-func (c *lruCache) evict() {
-	for c.usedmemory > c.maxmemory && c.head != nil {
-		entry := c.head
-		c.head = entry.next
-		c.head.prev = nil
-		c.usedmemory -= entry.size
-		delete(c.entries, entry.key)
+func (c *lruCache) Del(key string) bool {
+	if entry, ok := c.entries[key]; ok {
+		c.evictEntry(entry)
+		return true
 	}
+	return false
+}
+
+func (c *lruCache) insertFront(e *cacheEntry) {
+	e.next = c.head
+	c.head = e
+
+	e.prev = nil
+	if e.next != nil {
+		e.next.prev = e
+	}
+
+	if c.tail == nil {
+		c.tail = e
+	}
+}
+
+func (c *lruCache) evictEntry(e *cacheEntry) {
+	if e.prev != nil {
+		e.prev.next = e.next
+	}
+
+	if e.next != nil {
+		e.next.prev = e.prev
+	}
+
+	if e == c.head {
+		c.head = e.next
+	}
+
+	if e == c.tail {
+		c.tail = e.prev
+	}
+
+	c.usedmemory -= e.size
+	delete(c.entries, e.key)
 }
 
 func New(maxmemory int) Cache {
