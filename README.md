@@ -21,8 +21,8 @@ values in the cache do not change in size (i.e. do not mutate)__.
 maxMemory := 1000
 cache := lrucache.New(maxMemory)
 
-bar = cache.Get("foo", func () (value interface{}, ttl int, size int) {
-	return "bar", 10, len("bar")
+bar = cache.Get("foo", func () (value interface{}, ttl time.Duration, size int) {
+	return "bar", 10 * time.Second, len("bar")
 }).(string)
 
 ```

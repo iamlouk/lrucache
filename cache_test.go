@@ -1,16 +1,147 @@
 package lrucache
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-func TestColdCache(t *testing.T) {
+func TestBasics(t *testing.T) {
 	cache := New(123)
 
-	value := cache.Get("foo", func()(interface{}, int, int) {
-		return "bar", 0, 0
+	value1 := cache.Get("foo", func()(interface{}, time.Duration, int) {
+		return "bar", 1 * time.Second, 0
 	})
 
-	if value != "bar" {
+	if value1.(string) != "bar" {
 		t.Error("cache returned wrong value")
 	}
+
+	value2 := cache.Get("foo", func()(interface{}, time.Duration, int) {
+		t.Error("value should be cached")
+		return "", 0, 0
+	})
+
+	if value2.(string) != "bar" {
+		t.Error("cache returned wrong value")
+	}
+
+	existed := cache.Del("foo")
+	if !existed {
+		t.Error("delete did not work as expected")
+	}
+
+	value3 := cache.Get("foo", func()(interface{}, time.Duration, int) {
+		return "baz", 1 * time.Second, 0
+	})
+
+	if value3.(string) != "baz" {
+		t.Error("cache returned wrong value")
+	}
+
+	cache.Keys(func(key string, value interface{}){
+		if key != "foo" || value.(string) != "baz" {
+			t.Error("cache corrupted")
+		}
+	})
+}
+
+func TestExpiration(t *testing.T) {
+	cache := New(123)
+
+	failIfCalled := func()(interface{}, time.Duration, int) {
+		t.Error("Value should be cached!")
+		return "", 0, 0
+	}
+
+	val1 := cache.Get("foo", func()(interface{}, time.Duration, int) {
+		return "bar", 5 * time.Millisecond, 0
+	})
+	val2 := cache.Get("bar", func()(interface{}, time.Duration, int) {
+		return "foo", 20 * time.Millisecond, 0
+	})
+
+	val3 := cache.Get("foo", failIfCalled).(string)
+	val4 := cache.Get("bar", failIfCalled).(string)
+
+	if val1 != val3 || val3 != "bar" || val2 != val4 || val4 != "foo" {
+		t.Error("Wrong values returned")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	val5 := cache.Get("foo", func()(interface{}, time.Duration, int) {
+		return "baz", 0, 0
+	})
+	val6 := cache.Get("bar", failIfCalled)
+
+	if val5.(string) != "baz" || val6.(string) != "foo" {
+		t.Error("unexpected values")
+	}
+
+	cache.Keys(func(key string, val interface{}){
+		if key != "bar" || val.(string) != "foo" {
+			t.Error("wrong value expired")
+		}
+	})
+
+	time.Sleep(15 * time.Millisecond)
+	cache.Keys(func(key string, val interface{}){
+		t.Error("cache should be empty now")
+	})
+}
+
+func TestEviction(t *testing.T) {
+	c := New(100)
+	failIfCalled := func()(interface{}, time.Duration, int) {
+		t.Error("Value should be cached!")
+		return "", 0, 0
+	}
+
+	v1 := c.Get("foo", func()(interface{}, time.Duration, int) {
+		return "bar", 1 * time.Second, 1000
+	})
+
+	v2 := c.Get("foo", func()(interface{}, time.Duration, int) {
+		return "baz", 1 * time.Second, 1000
+	})
+
+	if v1.(string) != "bar" || v2.(string) != "baz" {
+		t.Error("wrong values returned")
+	}
+
+	c.Keys(func(key string, val interface{}){
+		t.Error("cache should be empty now")
+	})
+
+	v1 = c.Get("A", func()(interface{}, time.Duration, int) {
+		return "a", 1 * time.Second, 50
+	})
+
+	v2 = c.Get("B", func()(interface{}, time.Duration, int) {
+		return "b", 1 * time.Second, 50
+	})
+
+	_ = c.Get("A", failIfCalled)
+	_ = c.Get("B", failIfCalled)
+	_ = c.Get("C", func()(interface{}, time.Duration, int) {
+		return "c", 1 * time.Second, 50
+	})
+
+	_ = c.Get("B", failIfCalled)
+	_ = c.Get("C", failIfCalled)
+
+	v4 := c.Get("A", func()(interface{}, time.Duration, int) {
+		return "evicted", 1 * time.Second, 25
+	})
+
+	if v4.(string) != "evicted" {
+		t.Error("value should have been evicted")
+	}
+
+	c.Keys(func(key string, val interface{}){
+		if key != "A" && key != "C" {
+			t.Errorf("'%s' was not expected", key)
+		}
+	})
 }
 

@@ -5,11 +5,20 @@ import (
 	"sync"
 )
 
-type ComputeValue func() (value interface{}, ttl int, size int)
+type ComputeValue func() (value interface{}, ttl time.Duration, size int)
 
+// Because more implementations might follow, this is a interface.
+// See README.md for more general information.
 type Cache interface {
+	// Get and set values
 	Get(key string, computeValue ComputeValue) interface{}
+
+	// Delete a value, returning true if it was in the cache
 	Del(key string) bool
+
+	// Call f on every key in the cache,
+	// evict all expired keys and do some sanity checks.
+	Keys(f func(key string, val interface{}))
 }
 
 type cacheEntry struct {
@@ -36,7 +45,7 @@ func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
 	now := time.Now()
 
 	if entry, ok := c.entries[key]; ok {
-		if entry.expiration.After(now) {
+		if now.After(entry.expiration) {
 			c.evictEntry(entry)
 		} else {
 			if entry != c.head {
@@ -62,7 +71,7 @@ func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
 	entry := &cacheEntry{
 		key: key,
 		value: value,
-		expiration: now.Add(time.Duration(ttl) * time.Second),
+		expiration: now.Add(ttl),
 		size: size,
 	}
 
@@ -86,6 +95,53 @@ func (c *lruCache) Del(key string) bool {
 		return true
 	}
 	return false
+}
+
+func (c *lruCache) Keys(f func(key string, val interface{})) {
+	now := time.Now()
+
+	size := 0
+	for key, e := range c.entries {
+		if key != e.key {
+			panic("key mismatch")
+		}
+
+		if now.After(e.expiration) {
+			c.evictEntry(e)
+			continue
+		}
+
+		if e.prev != nil {
+			if e.prev.next != e {
+				panic("list corrupted")
+			}
+		}
+
+		if e.next != nil {
+			if e.next.prev != e {
+				panic("list corrupted")
+			}
+		}
+
+		size += e.size
+		f(key, e.value)
+	}
+
+	if size != c.usedmemory {
+		panic("size calculations failed")
+	}
+
+	if c.head != nil {
+		if c.tail == nil || c.head.prev != nil {
+			panic("head/tail corrupted")
+		}
+	}
+
+	if c.tail != nil {
+		if c.head == nil || c.tail.next != nil {
+			panic("head/tail corrupted")
+		}
+	}
 }
 
 func (c *lruCache) insertFront(e *cacheEntry) {
@@ -126,9 +182,7 @@ func (c *lruCache) evictEntry(e *cacheEntry) {
 func New(maxmemory int) Cache {
 	return &lruCache{
 		maxmemory: maxmemory,
-		usedmemory: 0,
 		entries: map[string]*cacheEntry{},
-		head: nil,
 	}
 }
 
