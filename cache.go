@@ -1,6 +1,9 @@
 package lrucache
 
-import "time"
+import (
+	"time"
+	"sync"
+)
 
 type ComputeValue func() (value interface{}, ttl int, size int)
 
@@ -20,29 +23,33 @@ type cacheEntry struct {
 }
 
 type lruCache struct {
+	mutex sync.Mutex
 	maxmemory, usedmemory int
 	entries map[string]*cacheEntry
 	head, tail *cacheEntry
 }
 
 func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
 	now := time.Now()
 
 	if entry, ok := c.entries[key]; ok {
 		if entry.expiration.After(now) {
 			c.evictEntry(entry)
 		} else {
-			if e != c.head {
+			if entry != c.head {
 				if entry.prev != nil {
 					entry.prev.next = entry.next
 				}
 				if entry.next != nil {
 					entry.next.prev = entry.prev
 				}
-				if e == c.tail {
-					c.tail = e.prev
+				if entry == c.tail {
+					c.tail = entry.prev
 					if c.tail == nil {
-						panic()
+						panic("Hä?")
 					}
 				}
 				c.insertFront(entry);
@@ -56,7 +63,7 @@ func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
 		key: key,
 		value: value,
 		expiration: now.Add(time.Duration(ttl) * time.Second),
-		size: size
+		size: size,
 	}
 
 	c.insertFront(entry)
@@ -71,6 +78,9 @@ func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
 }
 
 func (c *lruCache) Del(key string) bool {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
 	if entry, ok := c.entries[key]; ok {
 		c.evictEntry(entry)
 		return true
