@@ -6,6 +6,7 @@ It is heavily inspired by [PHP Symfony's Cache Components](https://symfony.com/d
 having a similar API. This library can not be used for persistance,
 is not properly tested yet and a bit special in a few ways described
 below (Especially with regards to the memory usage/`size`).
+All operations have time complexity *O(1)*.
 
 - Advantages:
     - Anything (`interface{}`) can be stored as value

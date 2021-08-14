@@ -75,8 +75,16 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	c.usedmemory += size
 	c.entries[key] = entry
 
-	for c.usedmemory > c.maxmemory && c.tail != nil {
-		c.evictEntry(c.tail)
+	// Evict only entries with a size of more than zero.
+	// This is the only loop in the implementation outside of the `Keys`
+	// method.
+	evictionCandidate := c.tail
+	for c.usedmemory > c.maxmemory && evictionCandidate != nil {
+		nextCandidate := evictionCandidate.prev
+		if evictionCandidate.size > 0 || now.After(evictionCandidate.expiration) {
+			c.evictEntry(evictionCandidate)
+		}
+		evictionCandidate = nextCandidate
 	}
 
 	return value
