@@ -5,21 +5,12 @@ import (
 	"sync"
 )
 
+// Type of the closure that must be passed to `Get` to
+// compute the value in case it is not cached.
+//
+// returned values are the computed value to be stored in the cache,
+// the duration until this value will expire and a size estimate.
 type ComputeValue func() (value interface{}, ttl time.Duration, size int)
-
-// Because more implementations might follow, this is a interface.
-// See README.md for more general information.
-type Cache interface {
-	// Get and set values
-	Get(key string, computeValue ComputeValue) interface{}
-
-	// Delete a value, returning true if it was in the cache
-	Del(key string) bool
-
-	// Call f on every key in the cache,
-	// evict all expired keys and do some sanity checks.
-	Keys(f func(key string, val interface{}))
-}
 
 type cacheEntry struct {
 	key string
@@ -31,14 +22,19 @@ type cacheEntry struct {
 	next, prev *cacheEntry
 }
 
-type lruCache struct {
+type Cache struct {
 	mutex sync.Mutex
 	maxmemory, usedmemory int
 	entries map[string]*cacheEntry
 	head, tail *cacheEntry
 }
 
-func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
+// Return the cached value for key `key` or call `computeValue` and
+// store its return value in the cache. If called, the closure will be
+// called synchronous and __shall not call methods on the same cache__
+// or a deadlock might ocure. Read [the README](./README.md) for more
+// information on how things work.
+func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -86,7 +82,11 @@ func (c *lruCache) Get(key string, computeValue ComputeValue) interface{} {
 	return value
 }
 
-func (c *lruCache) Del(key string) bool {
+// Remove the value at key `key` from the cache.
+// Return true if the key was in the cache and false
+// otherwise. It is possible that true is returned even
+// though the value already expired.
+func (c *Cache) Del(key string) bool {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -97,7 +97,12 @@ func (c *lruCache) Del(key string) bool {
 	return false
 }
 
-func (c *lruCache) Keys(f func(key string, val interface{})) {
+// Call f for every entry in the cache. Some sanity checks
+// and eviction of expired keys are done as well.
+func (c *Cache) Keys(f func(key string, val interface{})) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
 	now := time.Now()
 
 	size := 0
@@ -144,7 +149,7 @@ func (c *lruCache) Keys(f func(key string, val interface{})) {
 	}
 }
 
-func (c *lruCache) insertFront(e *cacheEntry) {
+func (c *Cache) insertFront(e *cacheEntry) {
 	e.next = c.head
 	c.head = e
 
@@ -158,7 +163,7 @@ func (c *lruCache) insertFront(e *cacheEntry) {
 	}
 }
 
-func (c *lruCache) evictEntry(e *cacheEntry) {
+func (c *Cache) evictEntry(e *cacheEntry) {
 	if e.prev != nil {
 		e.prev.next = e.next
 	}
@@ -179,8 +184,11 @@ func (c *lruCache) evictEntry(e *cacheEntry) {
 	delete(c.entries, e.key)
 }
 
+// Return a new instance of a LRU In-Memory Cache.
+// Read [the README](./README.md) for more information
+// on what is going on with `maxmemory`.
 func New(maxmemory int) Cache {
-	return &lruCache{
+	return Cache{
 		maxmemory: maxmemory,
 		entries: map[string]*cacheEntry{},
 	}
