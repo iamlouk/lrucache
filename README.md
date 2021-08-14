@@ -1,5 +1,7 @@
 # In-Memory LRU Cache for Golang Applications
 
+[![](https://pkg.go.dev/badge/github.com/iamlouk/lrucache?utm_source=godoc)](https://pkg.go.dev/github.com/iamlouk/lrucache)
+
 This library can be embedded into your existing go applications
 and play the role *Memcached* or *Redis* might play for others.
 It is heavily inspired by [PHP Symfony's Cache Components](https://symfony.com/doc/current/components/cache/adapters/array_cache_adapter.html),
@@ -12,10 +14,12 @@ All operations have time complexity *O(1)*.
     - Anything (`interface{}`) can be stored as value
     - As it lives in the application itself, no serialization or de-serialization is needed
     - As it lives in the application itself, no memory moving/networking is needed
+    - The computation of a new value for a key does __not__ block the full cache (only the key)
 - Disadvantages:
     - You have to provide a size estimate for every value
     - __This size estimate should not change (i.e. values should not mutate)__
     - The cache can only be accessed by one application
+    - The synchronization will have quire poor performance as it is implemented right now
 
 ```go
 // Go look at the godocs and ./cache_test.go for more documentation and examples

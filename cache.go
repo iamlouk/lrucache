@@ -18,15 +18,31 @@ type cacheEntry struct {
 
 	expiration time.Time
 	size int
+	waitingForComputation int
+	computationDone bool
 
 	next, prev *cacheEntry
 }
 
 type Cache struct {
-	mutex sync.Mutex
+	mutex *sync.Mutex
+	cond *sync.Cond
 	maxmemory, usedmemory int
 	entries map[string]*cacheEntry
 	head, tail *cacheEntry
+}
+
+// Return a new instance of a LRU In-Memory Cache.
+// Read [the README](./README.md) for more information
+// on what is going on with `maxmemory`.
+func New(maxmemory int) Cache {
+	mutex := new(sync.Mutex)
+	return Cache{
+		mutex: mutex,
+		cond: sync.NewCond(mutex),
+		maxmemory: maxmemory,
+		entries: map[string]*cacheEntry{},
+	}
 }
 
 // Return the cached value for key `key` or call `computeValue` and
@@ -41,6 +57,12 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	now := time.Now()
 
 	if entry, ok := c.entries[key]; ok {
+		for !entry.computationDone {
+			entry.waitingForComputation += 1
+			c.cond.Wait()
+			entry.waitingForComputation -= 1
+		}
+
 		if now.After(entry.expiration) {
 			c.evictEntry(entry)
 		} else {
@@ -63,17 +85,27 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 		}
 	}
 
-	value, ttl, size := computeValue()
 	entry := &cacheEntry{
 		key: key,
-		value: value,
-		expiration: now.Add(ttl),
-		size: size,
+		computationDone: false,
+		waitingForComputation: 1,
 	}
 
-	c.insertFront(entry)
-	c.usedmemory += size
 	c.entries[key] = entry
+
+	c.mutex.Unlock()
+	value, ttl, size := computeValue()
+	c.mutex.Lock()
+
+	entry.value = value
+	entry.expiration = now.Add(ttl)
+	entry.size = size
+	entry.computationDone = true
+	entry.waitingForComputation -= 1
+
+	c.cond.Broadcast()
+	c.usedmemory += size
+	c.insertFront(entry)
 
 	// Evict only entries with a size of more than zero.
 	// This is the only loop in the implementation outside of the `Keys`
@@ -81,7 +113,8 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	evictionCandidate := c.tail
 	for c.usedmemory > c.maxmemory && evictionCandidate != nil {
 		nextCandidate := evictionCandidate.prev
-		if evictionCandidate.size > 0 || now.After(evictionCandidate.expiration) {
+		if (evictionCandidate.size > 0 || now.After(evictionCandidate.expiration)) &&
+				evictionCandidate.waitingForComputation == 0 {
 			c.evictEntry(evictionCandidate)
 		}
 		evictionCandidate = nextCandidate
@@ -172,6 +205,10 @@ func (c *Cache) insertFront(e *cacheEntry) {
 }
 
 func (c *Cache) evictEntry(e *cacheEntry) {
+	if !e.computationDone || e.waitingForComputation != 0 {
+		panic("cannot evict this entry as other goroutines need the value")
+	}
+
 	if e.prev != nil {
 		e.prev.next = e.next
 	}
@@ -190,15 +227,5 @@ func (c *Cache) evictEntry(e *cacheEntry) {
 
 	c.usedmemory -= e.size
 	delete(c.entries, e.key)
-}
-
-// Return a new instance of a LRU In-Memory Cache.
-// Read [the README](./README.md) for more information
-// on what is going on with `maxmemory`.
-func New(maxmemory int) Cache {
-	return Cache{
-		maxmemory: maxmemory,
-		entries: map[string]*cacheEntry{},
-	}
 }
 

@@ -3,6 +3,8 @@ package lrucache
 import (
 	"testing"
 	"time"
+	"sync"
+	"sync/atomic"
 )
 
 func TestBasics(t *testing.T) {
@@ -143,5 +145,41 @@ func TestEviction(t *testing.T) {
 			t.Errorf("'%s' was not expected", key)
 		}
 	})
+}
+
+// I know that this is a shity test,
+// time is relative and unreliable.
+func TestConcurrency(t *testing.T) {
+	c := New(100)
+	var wg sync.WaitGroup
+
+	numActions := 10000
+	numThreads := 4
+	wg.Add(numThreads)
+
+	var concurrentModifications int32 = 0
+
+	for i := 0; i < numThreads; i++ {
+		go func(){
+			for j := 0; j < numActions; j++ {
+				_ = c.Get("key", func()(interface{}, time.Duration, int) {
+					m := atomic.AddInt32(&concurrentModifications, 1)
+					if m != 1 {
+						t.Error("only one goroutine at a time should calculate a value for the same key")
+					}
+
+					time.Sleep(1 * time.Millisecond)
+					atomic.AddInt32(&concurrentModifications, -1)
+					return "value", 5 * time.Millisecond, 1
+				})
+			}
+
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	c.Keys(func(key string, val interface{}){})
 }
 
