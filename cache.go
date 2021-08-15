@@ -19,7 +19,6 @@ type cacheEntry struct {
 	expiration time.Time
 	size int
 	waitingForComputation int
-	computationDone bool
 
 	next, prev *cacheEntry
 }
@@ -57,7 +56,9 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	now := time.Now()
 
 	if entry, ok := c.entries[key]; ok {
-		for !entry.computationDone {
+		// The expiration not being set is what shows us that
+		// the computation of that value is still ongoing.
+		for entry.expiration.IsZero() {
 			entry.waitingForComputation += 1
 			c.cond.Wait()
 			entry.waitingForComputation -= 1
@@ -87,7 +88,6 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 
 	entry := &cacheEntry{
 		key: key,
-		computationDone: false,
 		waitingForComputation: 1,
 	}
 
@@ -100,10 +100,16 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	entry.value = value
 	entry.expiration = now.Add(ttl)
 	entry.size = size
-	entry.computationDone = true
 	entry.waitingForComputation -= 1
 
-	c.cond.Broadcast()
+	// Only broadcast if other goroutines are actually waiting
+	// for a result.
+	if entry.waitingForComputation > 0 {
+		// TODO: Have more than one condition variable so that there are
+		// less unnecessary wakeups.
+		c.cond.Broadcast()
+	}
+
 	c.usedmemory += size
 	c.insertFront(entry)
 
@@ -205,7 +211,7 @@ func (c *Cache) insertFront(e *cacheEntry) {
 }
 
 func (c *Cache) evictEntry(e *cacheEntry) {
-	if !e.computationDone || e.waitingForComputation != 0 {
+	if e.waitingForComputation != 0 {
 		panic("cannot evict this entry as other goroutines need the value")
 	}
 
