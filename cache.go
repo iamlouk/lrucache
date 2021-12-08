@@ -1,8 +1,8 @@
 package lrucache
 
 import (
-	"time"
 	"sync"
+	"time"
 )
 
 // Type of the closure that must be passed to `Get` to
@@ -13,35 +13,34 @@ import (
 type ComputeValue func() (value interface{}, ttl time.Duration, size int)
 
 type cacheEntry struct {
-	key string
+	key   string
 	value interface{}
 
-	expiration time.Time
-	size int
+	expiration            time.Time
+	size                  int
 	waitingForComputation int
 
 	next, prev *cacheEntry
 }
 
 type Cache struct {
-	mutex *sync.Mutex
-	cond *sync.Cond
+	mutex                 sync.Mutex
+	cond                  *sync.Cond
 	maxmemory, usedmemory int
-	entries map[string]*cacheEntry
-	head, tail *cacheEntry
+	entries               map[string]*cacheEntry
+	head, tail            *cacheEntry
 }
 
 // Return a new instance of a LRU In-Memory Cache.
 // Read [the README](./README.md) for more information
 // on what is going on with `maxmemory`.
-func New(maxmemory int) Cache {
-	mutex := new(sync.Mutex)
-	return Cache{
-		mutex: mutex,
-		cond: sync.NewCond(mutex),
+func New(maxmemory int) *Cache {
+	cache := &Cache{
 		maxmemory: maxmemory,
-		entries: map[string]*cacheEntry{},
+		entries:   map[string]*cacheEntry{},
 	}
+	cache.cond = sync.NewCond(&cache.mutex)
+	return cache
 }
 
 // Return the cached value for key `key` or call `computeValue` and
@@ -80,14 +79,14 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 						panic("Hä?")
 					}
 				}
-				c.insertFront(entry);
+				c.insertFront(entry)
 			}
 			return entry.value
 		}
 	}
 
 	entry := &cacheEntry{
-		key: key,
+		key:                   key,
 		waitingForComputation: 1,
 	}
 
@@ -120,7 +119,7 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	for c.usedmemory > c.maxmemory && evictionCandidate != nil {
 		nextCandidate := evictionCandidate.prev
 		if (evictionCandidate.size > 0 || now.After(evictionCandidate.expiration)) &&
-				evictionCandidate.waitingForComputation == 0 {
+			evictionCandidate.waitingForComputation == 0 {
 			c.evictEntry(evictionCandidate)
 		}
 		evictionCandidate = nextCandidate
@@ -234,4 +233,3 @@ func (c *Cache) evictEntry(e *cacheEntry) {
 	c.usedmemory -= e.size
 	delete(c.entries, e.key)
 }
-
