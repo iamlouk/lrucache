@@ -64,7 +64,12 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 		}
 
 		if now.After(entry.expiration) {
-			c.evictEntry(entry)
+			if !c.evictEntry(entry) {
+				if entry.expiration.IsZero() {
+					panic("cache entry that shoud have been waited for could not be evicted.")
+				}
+				return entry.value
+			}
 		} else {
 			if entry != c.head {
 				if entry.prev != nil {
@@ -132,13 +137,15 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 // Return true if the key was in the cache and false
 // otherwise. It is possible that true is returned even
 // though the value already expired.
+// It is possible that false is returned even though the value
+// will show up in the cache if this function is called on a key
+// while that key is beeing computed.
 func (c *Cache) Del(key string) bool {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	if entry, ok := c.entries[key]; ok {
-		c.evictEntry(entry)
-		return true
+		return c.evictEntry(entry)
 	}
 	return false
 }
@@ -158,8 +165,9 @@ func (c *Cache) Keys(f func(key string, val interface{})) {
 		}
 
 		if now.After(e.expiration) {
-			c.evictEntry(e)
-			continue
+			if c.evictEntry(e) {
+				continue
+			}
 		}
 
 		if e.prev != nil {
@@ -209,9 +217,10 @@ func (c *Cache) insertFront(e *cacheEntry) {
 	}
 }
 
-func (c *Cache) evictEntry(e *cacheEntry) {
+func (c *Cache) evictEntry(e *cacheEntry) bool {
 	if e.waitingForComputation != 0 {
-		panic("cannot evict this entry as other goroutines need the value")
+		// panic("cannot evict this entry as other goroutines need the value")
+		return false
 	}
 
 	if e.prev != nil {
@@ -232,4 +241,5 @@ func (c *Cache) evictEntry(e *cacheEntry) {
 
 	c.usedmemory -= e.size
 	delete(c.entries, e.key)
+	return true
 }
