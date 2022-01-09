@@ -9,6 +9,8 @@ having a similar API. This library can not be used for persistance,
 is not properly tested yet and a bit special in a few ways described
 below (Especially with regards to the memory usage/`size`).
 
+In addition to the interface described below, a `http.Handler` that can be used as middleware is provided as well.
+
 - Advantages:
     - Anything (`interface{}`) can be stored as value
     - As it lives in the application itself, no serialization or de-serialization is needed

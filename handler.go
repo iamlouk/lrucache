@@ -3,17 +3,23 @@ package lrucache
 import (
 	"bytes"
 	"net/http"
+	"strconv"
 	"time"
 )
 
 // HttpHandler is can be used as HTTP Middleware in order to cache requests,
-// for example static assets. The request's raw URI is used and nothing else,
-// so this handler should not be used to cache requests with responses depending
-// on cookies or request headers.
+// for example static assets. By default, the request's raw URI is used as key and nothing else.
+// Results with a status code other than 200 are cached with a TTL of zero seconds,
+// so basically re-fetched as soon as the current fetch is done and a new request
+// for that URI is done.
 type HttpHandler struct {
 	cache      *Cache
 	fetcher    http.Handler
 	defaultTTL time.Duration
+
+	// Allows overriding the way the cache key is extracted
+	// from the http request. The defailt is to use the RequestURI.
+	CacheKey func(*http.Request) string
 }
 
 var _ http.Handler = (*HttpHandler)(nil)
@@ -46,6 +52,10 @@ func (crw *cachedResponseWriter) WriteHeader(statusCode int) {
 	crw.w.WriteHeader(statusCode)
 }
 
+func uriAsCacheKey(r *http.Request) string {
+	return r.RequestURI
+}
+
 // Returns a new caching HttpHandler. If no entry in the cache is found or it was too old, `fetcher` is called with
 // a modified http.ResponseWriter and the response is stored in the cache. If `fetcher` sets the "Expires" header,
 // the ttl is set appropriately (otherwise, the default ttl passed as argument here is used).
@@ -55,6 +65,7 @@ func NewHttpHandler(maxmemory int, ttl time.Duration, fetcher http.Handler) *Htt
 		cache:      New(maxmemory),
 		defaultTTL: ttl,
 		fetcher:    fetcher,
+		CacheKey:   uriAsCacheKey,
 	}
 }
 
@@ -65,7 +76,7 @@ func (h *HttpHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cr := h.cache.Get(r.RequestURI, func() (interface{}, time.Duration, int) {
+	cr := h.cache.Get(h.CacheKey(r), func() (interface{}, time.Duration, int) {
 		crw := &cachedResponseWriter{
 			w:          rw,
 			statusCode: 200,
@@ -75,15 +86,18 @@ func (h *HttpHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		h.fetcher.ServeHTTP(crw, r)
 
 		cr := &cachedResponse{
-			headers:    rw.Header(),
+			headers:    rw.Header().Clone(),
 			statusCode: crw.statusCode,
 			data:       crw.buf.Bytes(),
 			fetched:    time.Now(),
 		}
+		cr.headers.Set("Content-Length", strconv.Itoa(len(cr.data)))
 
 		ttl := h.defaultTTL
-		if cr.headers.Get("Expires") != "" {
-			if expires, err := http.ParseTime(cr.headers.Get("Expires")); err != nil {
+		if cr.statusCode != http.StatusOK {
+			ttl = 0
+		} else if cr.headers.Get("Expires") != "" {
+			if expires, err := http.ParseTime(cr.headers.Get("Expires")); err == nil {
 				ttl = time.Until(expires)
 			}
 		}
@@ -94,6 +108,8 @@ func (h *HttpHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	for key, val := range cr.headers {
 		rw.Header()[key] = val
 	}
+
+	cr.headers.Set("Age", strconv.Itoa(int(time.Since(cr.fetched).Seconds())))
 
 	rw.WriteHeader(cr.statusCode)
 	rw.Write(cr.data)
