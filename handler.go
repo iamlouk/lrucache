@@ -49,11 +49,6 @@ func (crw *cachedResponseWriter) Write(bytes []byte) (int, error) {
 
 func (crw *cachedResponseWriter) WriteHeader(statusCode int) {
 	crw.statusCode = statusCode
-	crw.w.WriteHeader(statusCode)
-}
-
-func uriAsCacheKey(r *http.Request) string {
-	return r.RequestURI
 }
 
 // Returns a new caching HttpHandler. If no entry in the cache is found or it was too old, `fetcher` is called with
@@ -65,7 +60,16 @@ func NewHttpHandler(maxmemory int, ttl time.Duration, fetcher http.Handler) *Htt
 		cache:      New(maxmemory),
 		defaultTTL: ttl,
 		fetcher:    fetcher,
-		CacheKey:   uriAsCacheKey,
+		CacheKey: func(r *http.Request) string {
+			return r.RequestURI
+		},
+	}
+}
+
+// gorilla/mux style middleware:
+func NewMiddleware(maxmemory int, ttl time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return NewHttpHandler(maxmemory, ttl, next)
 	}
 }
 

@@ -46,14 +46,14 @@ func New(maxmemory int) *Cache {
 // Return the cached value for key `key` or call `computeValue` and
 // store its return value in the cache. If called, the closure will be
 // called synchronous and __shall not call methods on the same cache__
-// or a deadlock might ocure. Read [the README](./README.md) for more
-// information on how things work.
+// or a deadlock might ocure. If `computeValue` is nil, the cache is checked
+// and if no entry was found, nil is returned. If another goroutine is currently
+// computing that value, the result is waited for.
 func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
 	now := time.Now()
 
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	if entry, ok := c.entries[key]; ok {
 		// The expiration not being set is what shows us that
 		// the computation of that value is still ongoing.
@@ -72,22 +72,15 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 			}
 		} else {
 			if entry != c.head {
-				if entry.prev != nil {
-					entry.prev.next = entry.next
-				}
-				if entry.next != nil {
-					entry.next.prev = entry.prev
-				}
-				if entry == c.tail {
-					c.tail = entry.prev
-					if c.tail == nil {
-						panic("Hä?")
-					}
-				}
+				c.unlinkEntry(entry)
 				c.insertFront(entry)
 			}
 			return entry.value
 		}
+	}
+
+	if computeValue == nil {
+		return nil
 	}
 
 	entry := &cacheEntry{
@@ -131,6 +124,41 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	}
 
 	return value
+}
+
+// Put a new value in the cache. If another goroutine is calling `Get` and
+// computing the value, this function waits for the computation to be done
+// before it overwrites the value.
+func (c *Cache) Put(key string, value interface{}, size int, ttl time.Duration) {
+	now := time.Now()
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if entry, ok := c.entries[key]; ok {
+		for entry.expiration.IsZero() {
+			entry.waitingForComputation += 1
+			c.cond.Wait()
+			entry.waitingForComputation -= 1
+		}
+
+		c.usedmemory -= entry.size
+		entry.expiration = now.Add(ttl)
+		entry.size = size
+		entry.value = value
+		c.usedmemory += entry.size
+
+		c.unlinkEntry(entry)
+		c.insertFront(entry)
+		return
+	}
+
+	entry := &cacheEntry{
+		key:        key,
+		value:      value,
+		expiration: now.Add(ttl),
+	}
+	c.entries[key] = entry
+	c.insertFront(entry)
 }
 
 // Remove the value at key `key` from the cache.
@@ -217,28 +245,28 @@ func (c *Cache) insertFront(e *cacheEntry) {
 	}
 }
 
+func (c *Cache) unlinkEntry(e *cacheEntry) {
+	if e == c.head {
+		c.head = e.next
+	}
+	if e.prev != nil {
+		e.prev.next = e.next
+	}
+	if e.next != nil {
+		e.next.prev = e.prev
+	}
+	if e == c.tail {
+		c.tail = e.prev
+	}
+}
+
 func (c *Cache) evictEntry(e *cacheEntry) bool {
 	if e.waitingForComputation != 0 {
 		// panic("cannot evict this entry as other goroutines need the value")
 		return false
 	}
 
-	if e.prev != nil {
-		e.prev.next = e.next
-	}
-
-	if e.next != nil {
-		e.next.prev = e.prev
-	}
-
-	if e == c.head {
-		c.head = e.next
-	}
-
-	if e == c.tail {
-		c.tail = e.prev
-	}
-
+	c.unlinkEntry(e)
 	c.usedmemory -= e.size
 	delete(c.entries, e.key)
 	return true

@@ -4,7 +4,7 @@
 
 This library can be embedded into your existing go applications
 and play the role *Memcached* or *Redis* might play for others.
-It is heavily inspired by [PHP Symfony's Cache Components](https://symfony.com/doc/current/components/cache/adapters/array_cache_adapter.html),
+It is inspired by [PHP Symfony's Cache Components](https://symfony.com/doc/current/components/cache/adapters/array_cache_adapter.html),
 having a similar API. This library can not be used for persistance,
 is not properly tested yet and a bit special in a few ways described
 below (Especially with regards to the memory usage/`size`).
@@ -40,7 +40,9 @@ bar = cache.Get("foo", func () (value interface{}, ttl time.Duration, size int) 
 }).(string)
 ```
 
-## What is this shit? Why is there no `cache.Set(key, value)` method?
+## Why does `cache.Get` take a function as argument?
+
+*Using the mechanism described below is optional, the second argument to `Get` can be `nil` and there is a `Put` function as well.*
 
 Because this library is meant to be used by multi threaded applications and the following would
 result in the same data being fetched twice if both goroutines run in parallel:
