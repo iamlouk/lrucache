@@ -53,7 +53,6 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 	now := time.Now()
 
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
 	if entry, ok := c.entries[key]; ok {
 		// The expiration not being set is what shows us that
 		// the computation of that value is still ongoing.
@@ -68,6 +67,7 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 				if entry.expiration.IsZero() {
 					panic("cache entry that shoud have been waited for could not be evicted.")
 				}
+				c.mutex.Unlock()
 				return entry.value
 			}
 		} else {
@@ -75,11 +75,13 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 				c.unlinkEntry(entry)
 				c.insertFront(entry)
 			}
+			c.mutex.Unlock()
 			return entry.value
 		}
 	}
 
 	if computeValue == nil {
+		c.mutex.Unlock()
 		return nil
 	}
 
@@ -90,9 +92,21 @@ func (c *Cache) Get(key string, computeValue ComputeValue) interface{} {
 
 	c.entries[key] = entry
 
+	hasPaniced := true
+	defer func() {
+		if hasPaniced {
+			c.mutex.Lock()
+			delete(c.entries, key)
+			entry.expiration = now
+			entry.waitingForComputation -= 1
+		}
+		c.mutex.Unlock()
+	}()
+
 	c.mutex.Unlock()
 	value, ttl, size := computeValue()
 	c.mutex.Lock()
+	hasPaniced = false
 
 	entry.value = value
 	entry.expiration = now.Add(ttl)

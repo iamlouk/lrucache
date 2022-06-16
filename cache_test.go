@@ -182,3 +182,38 @@ func TestConcurrency(t *testing.T) {
 
 	c.Keys(func(key string, val interface{}) {})
 }
+
+func TestPanic(t *testing.T) {
+	c := New(100)
+
+	c.Put("bar", "baz", 3, 1*time.Minute)
+
+	testpanic := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if r.(string) != "oops" {
+					t.Fatal("unexpected panic value")
+				}
+			}
+		}()
+
+		_ = c.Get("foo", func() (value interface{}, ttl time.Duration, size int) {
+			panic("oops")
+		})
+
+		t.Fatal("should have paniced!")
+	}
+
+	testpanic()
+
+	v := c.Get("bar", func() (value interface{}, ttl time.Duration, size int) {
+		t.Fatal("should not be called!")
+		return nil, 0, 0
+	})
+
+	if v.(string) != "baz" {
+		t.Fatal("unexpected value")
+	}
+
+	testpanic()
+}
