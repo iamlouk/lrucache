@@ -116,3 +116,6 @@ have to provide a size for every value in whatever unit you like (as long as it 
 Suggestions on what to use as size: `len(str)` for strings, `len(slice) * size_of_slice_type`, etc.. It is possible
 to use `1` as size for every entry, in that case at most `maxMemory` entries will be in the cache at the same time.
 
+## Affects on GC
+
+Because of the way a garbage collector decides when to run ([explained in the runtime package](https://pkg.go.dev/runtime)), having large amounts of data sitting in your cache might increase the memory consumption of your process by two times the maximum size of the cache. You can decrease the *target percentage* to reduce the effect, but then you might have negative performance effects when your cache is not filled.

@@ -180,6 +180,7 @@ func (c *Cache) Del(key string) bool {
 
 // Call f for every entry in the cache. Some sanity checks
 // and eviction of expired keys are done as well.
+// The cache is fully locked for the complete duration of this call!
 func (c *Cache) Keys(f func(key string, val interface{})) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
